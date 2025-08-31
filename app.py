@@ -1,9 +1,10 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 from time import sleep
-from socket import socket, AF_INET, SOCK_STREAM
+from socket import socket, timeout, AF_INET, SOCK_STREAM
 import logging
 import json
 import jinja2
+from io import BytesIO
 
 app = Flask(__name__)
 config = {}
@@ -58,13 +59,20 @@ def query_device(device_name:str, command:str):
         return jsonify({
             'status': 'Invalid device command'
         }), 404
-    
+
     if 'query' not in device['commands'][command]:
         return jsonify({
             'status': 'Invalid device query'
         }), 400
-    
+
     arguments = device['commands'][command].get('arguments', {})
+    timeout = None
+    payload_size = device['commands'][command].get('payload_size')
+
+    if payload_size:
+        timeout = device['commands'][command].get('timeout',
+                    device.get('timeout',
+                        config.get('timeout', 1)))
 
     if request.is_json:
         arguments.update(request.json)
@@ -79,16 +87,26 @@ def query_device(device_name:str, command:str):
                     device['commands'][command]['query'],
                     arguments,
                 ),
-                timeout=device.get('timeout')).decode().strip()
+                recv_size=payload_size,
+                timeout=timeout)
     except:
+        _logger.exception('Failed to get data from device')
         return jsonify({
             'status': 'timeout',
         }), 500
 
-    return jsonify({
-        'status': 'ok',
-        'data': resp,
-    }), 200
+    resp_type = device['commands'][command].get('type', 'string')
+
+    if resp_type == 'string':
+        return jsonify({
+            'status': 'ok',
+            'data': resp.decode().strip(),
+        }), 200
+    else:
+        return send_file(
+            BytesIO(resp),
+            as_attachment=True,
+            download_name=f'{command}.{resp_type}')
 
 
 @app.route('/devices/<string:device_name>/<string:command>', methods=['POST'])
@@ -108,14 +126,20 @@ def update_device(device_name:str, command:str):
         return jsonify({
             'status': 'Invalid device command'
         }), 404
-    
-    
+
     if 'update' not in device['commands'][command]:
         return jsonify({
             'status': 'Invalid device update'
         }), 400
-    
+
     arguments = device['commands'][command].get('arguments', {})
+    timeout = None
+    payload_size = device['commands'][command].get('payload_size', 0)
+
+    if payload_size:
+        timeout = device['commands'][command].get('timeout',
+                    device.get('timeout',
+                        config.get('timeout', 1)))
 
     if request.is_json:
         arguments.update(request.json)
@@ -130,9 +154,10 @@ def update_device(device_name:str, command:str):
                     device['commands'][command]['update'],
                     arguments,
                 ),
-                recv_size=0,
-                timeout=device.get('timeout')).decode().strip()
+                recv_size=payload_size,
+                timeout=timeout)
     except:
+        _logger.exception('Failed to get data from device')
         return jsonify({
             'status': 'timeout',
         }), 500
@@ -142,20 +167,33 @@ def update_device(device_name:str, command:str):
     }), 200
 
 
-def send_scpi_command(ip_addr, port, command, recv_size=1024, timeout=None, line_delay=0):
+def send_scpi_command(ip_addr, port, command, recv_size=None, timeout=None, line_delay=0):
     with socket(AF_INET, SOCK_STREAM) as sock:
+        sock.connect((ip_addr, int(port)))
         sock.settimeout(timeout)
 
-        sock.connect((ip_addr, int(port)))
-        data = []
+        retval = []
 
         for line in command.splitlines():
             _logger.info(f'Sending "{line}"')
             sock.sendall(str(line + '\n').encode())
-            sleep(line_delay)
-            data = sock.recv(recv_size)
 
-    return data
+            sleep(line_delay)
+
+            if recv_size is None:
+                data = sock.recv(4096)
+                retval += data
+            else:
+                try:
+                    while len(retval) < recv_size:
+                        data = sock.recv(recv_size - len(retval))
+                        if not data:
+                            break
+                        retval += data
+                except TimeoutError:
+                    pass
+
+    return bytes(retval)
 
 
 def get_identity_info(device_config):
@@ -189,11 +227,12 @@ if __name__ == '__main__':
 
     _logger.info(f'Loaded {len(devices)} device configurations')
 
-    for device in devices:
-        _logger.debug(f'Contacting device at {devices[device]['host']}')
-        try:
-            devices[device]['identity'] = get_identity_info(devices[device])
-        except:
-            _logger.exception(f'Unable to get identity information for "{device}"')
+    if config.get('probe_on_start', False):
+        for device in devices:
+            _logger.debug(f'Contacting device at {devices[device]['host']}')
+            try:
+                devices[device]['identity'] = get_identity_info(devices[device])
+            except:
+                _logger.exception(f'Unable to get identity information for "{device}"')
 
     app.run(port=int(config.get('port', 8080)))
