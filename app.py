@@ -8,7 +8,7 @@ from io import BytesIO
 
 app = Flask(__name__)
 config = {}
-_logger = logging.getLogger('web-scpi')
+_logger = app.logger
 
 
 @app.route('/devices')
@@ -215,12 +215,22 @@ def generate_command_string(input_string, values):
 
 
 if __name__ == '__main__':
+    from os import environ
+    from pathlib import Path
 
-    config_file = 'config.json'
+    if "CONFIG_FILE" in environ:
+        config_file = Path(environ.get("CONFIG_FILE"))
+    else:
+        config_file = Path(environ.get("CONFIG_DIR",
+            environ.get("CODE_DIR", Path.home() / "config"))) /  'config.json'
 
     _logger.info(f'Loading configuration file from {config_file}')
 
-    with open("config.json", mode="r") as f:
+    if not config_file.is_file():
+        _logger.error("Unable to locate configuration file")
+        exit(-1)
+
+    with open(config_file, mode="r") as f:
         config = json.load(f)
 
     devices = config.get('devices', {})
@@ -235,4 +245,7 @@ if __name__ == '__main__':
             except:
                 _logger.exception(f'Unable to get identity information for "{device}"')
 
-    app.run(port=int(config.get('port', 8080)))
+    app.run(
+        host='0.0.0.0',
+        port=int(config.get('port', environ.get("PORT_NUMBER")))
+    )
