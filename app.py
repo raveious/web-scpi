@@ -1,3 +1,6 @@
+# Copyright (c) 2025 Ian Wakely
+# SPDX-License-Identifier: Apache-2.0
+
 from flask import Flask, jsonify, request, send_file
 from time import sleep
 from socket import socket, timeout, AF_INET, SOCK_STREAM
