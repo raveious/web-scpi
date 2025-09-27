@@ -82,7 +82,7 @@ def query_device(device_name:str, command:str):
     try:
         resp = send_scpi_command(
                 device['host'],
-                device['port'],
+                device.get('port', 5025),
                 generate_command_string(
                     device['commands'][command]['query'],
                     arguments,
@@ -149,7 +149,7 @@ def update_device(device_name:str, command:str):
     try:
         resp = send_scpi_command(
                 device['host'],
-                device['port'],
+                device.get('port', 5025),
                 generate_command_string(
                     device['commands'][command]['update'],
                     arguments,
