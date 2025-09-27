@@ -1,5 +1,6 @@
 *.pdf
 *.swp
 *.pyc
+*.json
 **/__pycache__
 venv
